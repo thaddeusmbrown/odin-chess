@@ -46,8 +46,9 @@ you can move your pawn diagonally behind it to capture.  This must be done immed
 
   def check_valid_input(answer)
     begin
+      raise StandardError if answer.length != 5
       file_start, rank_start, file_end, rank_end = answer[0], answer[1], answer[3], answer[4]
-    rescue
+    rescue StandardError
       invalid_input
     end
     if @file.include?(file_start) && @file.include?(file_end) && @rank.include?(rank_start) && @rank.include?(rank_end)
@@ -61,18 +62,22 @@ you can move your pawn diagonally behind it to capture.  This must be done immed
     file_start, rank_start, file_end, rank_end = file_start.ord - 97, rank_start - 1, file_end.ord - 97, rank_end - 1
     if @turn.zero?
       @board.white_player.pieces.each do |piece|
-        set_piece(piece, @board.white_player.locations, @board.black_player.locations) if piece.location == [rank_start, file_start]
+        set_piece(piece, @board.white_player, @board.black_player) if piece.location == [rank_start, file_start]
       end
     else
       @board.black_player.pieces.each do |piece|
-        set_piece(piece, @board.black_player.locations, @board.white_player.locations) if piece.location == [rank_start, file_start]
+        set_piece(piece, @board.black_player, @board.white_player) if piece.location == [rank_start, file_start]
       end
     end
     no_owned_piece
   end
 
-  def set_piece(piece, friendly_locations, enemy_locations)
-    valid_moves = piece.find_valid_moves(friendly_locations, enemy_locations)
+  def set_piece(piece, friendly_player, enemy_player)
+    if piece.is_a?(Pawn)
+      valid_moves, en_passant_bit = piece.find_valid_moves(friendly_player, enemy_player)
+    else
+      valid_moves = piece.find_valid_moves(friendly_player, enemy_player)
+    end
   end
 
   def invalid_input
@@ -194,19 +199,56 @@ class Pawn < Piece
     super
     @location = side == 'white' ? [1, col] : [6, col]
     @icon = side == 'white' ? "\u265f".encode('utf-8').white : "\u265f".encode('utf-8').black
+    @potential_moves = [[2, 0], [1, 0], [1, -1], [1, 1]]
     @move_bit = false
-    @potential_moves = [[1, 0], [2, 0], [1, -1], [1, 1]]
+    @en_passant_bit = false
   end
 
-  def find_valid_moves(friendly_locations, enemy_locations)
+  def find_valid_moves(friendly_player, enemy_player)
     @valid_moves = []
-    check_moves = []
-    @potential_moves.each do |move|
-      check_moves.push(@location + move)
+    check_moves = add_check_moves
+    on_board_moves = remove_out_board_moves(check_moves)
+    open_moves = on_board_moves - friendly_player.locations
+    p open_moves
+    all_moves = keep_attack_moves(open_moves, enemy_player.locations)
+    return add_en_passant(all_moves, enemy_player.pieces)
+  end
+
+  def add_check_moves
+    check_moves = Array.new(4, @location)
+    @potential_moves.each_with_index do |move, index|
+      check_moves[index] = [check_moves[index], move].transpose.map(&:sum)
     end
+    check_moves.shift if @move_bit
+    check_moves
+  end
 
+  def remove_out_board_moves(check_moves)
+    on_board_moves = []
+    check_moves.each do |move|
+      on_board_moves.push(move) if move[0].between?(0, 7) && move[1].between?(0, 7)
+    end
+    on_board_moves
+  end
 
+  def keep_attack_moves(open_moves, enemy_locations)
+    all_moves = []
+    open_moves.each do |move|
+      all_moves.push(move) if enemy_locations.include?(move)
+    end
+    all_moves
+  end
 
+  def add_en_passant(all_moves, enemy_pieces)
+    final_moves = all_moves
+    return final_moves, false if (@side == 'white' && @location[0] != 4) || (@side == 'black' && @location[0] != 3)
+
+    enemy_pieces.each do |piece|
+      next unless piece.is_a?(Pawn) && ((@location[1] - piece.location[1])**2) == 1 && piece.en_passant_bit
+
+      final_moves.push(piece.location)
+      return final_moves, true
+    end
   end
 end
 
